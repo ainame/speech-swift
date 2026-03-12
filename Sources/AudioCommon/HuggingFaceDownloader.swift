@@ -86,7 +86,10 @@ public enum HuggingFaceDownloader {
             globs.append(file)
         }
 
-        let client = makeHubClient(for: directory)
+        let (client, session) = makeHubClient(for: directory)
+        defer {
+            session.finishTasksAndInvalidate()
+        }
         guard let repo = Repo.ID(rawValue: modelId) else {
             throw DownloadError.failedToDownload("\(modelId): invalid repository identifier")
         }
@@ -184,9 +187,14 @@ public enum HuggingFaceDownloader {
             .appendingPathComponent(repo.name, isDirectory: true)
     }
 
-    private static func makeHubClient(for repoDir: URL) -> HubClient {
+    private static func makeHubClient(for repoDir: URL) -> (HubClient, URLSession) {
         let cacheRoot = resolveHubCacheRoot(for: repoDir)
-        return HubClient(cache: HubCache(cacheDirectory: cacheRoot))
+        let session = URLSession(configuration: .default)
+        let client = HubClient(
+            session: session,
+            cache: HubCache(cacheDirectory: cacheRoot)
+        )
+        return (client, session)
     }
 
     private static func resolveHubCacheRoot(for repoDir: URL) -> URL {
