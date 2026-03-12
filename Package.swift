@@ -60,7 +60,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.30.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
-        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
+        .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.8.1"),
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", "2.5.0"..<"2.17.0"),
         .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.6.0")
     ],
@@ -71,7 +71,7 @@ let package = Package(
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift"),
-                .product(name: "Hub", package: "swift-transformers")
+                .product(name: "HuggingFace", package: "swift-huggingface")
             ]
         ),
         .target(

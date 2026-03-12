@@ -1,5 +1,5 @@
 import Foundation
-import Hub
+import HuggingFace
 import os
 
 /// Download errors
@@ -19,8 +19,8 @@ public enum DownloadError: Error, LocalizedError {
 
 /// HuggingFace model downloader — shared between ASR, TTS, VAD, etc.
 ///
-/// Uses `HubApi` from the swift-transformers `Hub` module for downloads,
-/// which provides HF token auth, metadata tracking, and resume support.
+/// Uses `HubClient` from swift-huggingface for downloads while keeping
+/// speech-swift's existing cache-directory layout stable.
 public enum HuggingFaceDownloader {
 
     // MARK: - Cache Directory
@@ -28,7 +28,7 @@ public enum HuggingFaceDownloader {
     /// Get cache directory for a model.
     ///
     /// Returns the old flat cache path if it already contains model files (preserving
-    /// ~10 GB of existing cached models), otherwise returns the new Hub-style path.
+    /// ~10 GB of existing cached models), otherwise returns the namespaced cache path.
     public static func getCacheDirectory(for modelId: String, cacheDirName: String = "qwen3-speech") throws -> URL {
         let base = resolveBaseCacheDir(cacheDirName: cacheDirName)
         let fm = FileManager.default
@@ -40,11 +40,7 @@ public enum HuggingFaceDownloader {
             return oldDir
         }
 
-        // New Hub-style path:
-        //   ~/Library/Caches/qwen3-speech/models/aufklarer/Qwen3-ASR-0.6B-MLX-4bit/
-        let hub = HubApi(downloadBase: base)
-        let repo = Hub.Repo(id: modelId)
-        let dir = hub.localRepoLocation(repo)
+        let dir = modelCacheDirectory(for: modelId, base: base)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -66,7 +62,7 @@ public enum HuggingFaceDownloader {
 
     // MARK: - Download
 
-    /// Download model files from HuggingFace using `HubApi.snapshot()`.
+    /// Download model files from HuggingFace using `HubClient.downloadSnapshot(...)`.
     ///
     /// Builds glob patterns from the file list:
     /// - Always includes `config.json`
@@ -90,16 +86,17 @@ public enum HuggingFaceDownloader {
             globs.append(file)
         }
 
-        // Derive the download base from the directory.
-        // getCacheDirectory returns either:
-        //   old: base/cacheKey         (flat, already has weights — won't reach here)
-        //   new: base/models/org/model  (Hub-style)
-        // For Hub API we need `base` as downloadBase.
-        let hub = makeHubApi(for: modelId, repoDir: directory)
-        let repo = Hub.Repo(id: modelId)
+        let client = makeHubClient(for: directory)
+        guard let repo = Repo.ID(rawValue: modelId) else {
+            throw DownloadError.failedToDownload("\(modelId): invalid repository identifier")
+        }
 
         do {
-            try await hub.snapshot(from: repo, matching: globs) { progress in
+            _ = try await client.downloadSnapshot(
+                of: repo,
+                to: directory,
+                matching: globs
+            ) { progress in
                 progressHandler?(progress.fractionCompleted)
             }
         } catch {
@@ -176,23 +173,29 @@ public enum HuggingFaceDownloader {
         return root.appendingPathComponent(cacheDirName, isDirectory: true)
     }
 
-    /// Create a `HubApi` whose `downloadBase` is derived from the repo directory that
-    /// `getCacheDirectory` returned (strips the `models/<org>/<model>` suffix).
-    private static func makeHubApi(for modelId: String, repoDir: URL) -> HubApi {
-        // repoDir is  base/models/org/model
-        // We need     base
-        let repo = Hub.Repo(id: modelId)
-        let suffix = "/\(repo.type.rawValue)/\(repo.id)"
-        let repoDirPath = repoDir.path
-        let downloadBase: URL
-        if repoDirPath.hasSuffix(suffix) {
-            let basePath = String(repoDirPath.dropLast(suffix.count))
-            downloadBase = URL(fileURLWithPath: basePath, isDirectory: true)
-        } else {
-            // Fallback: old-style flat dir — use its parent as downloadBase.
-            // Hub won't match this path, so we derive base from env/defaults.
-            downloadBase = resolveBaseCacheDir(cacheDirName: repoDir.deletingLastPathComponent().lastPathComponent)
+    private static func modelCacheDirectory(for modelId: String, base: URL) -> URL {
+        guard let repo = Repo.ID(rawValue: modelId) else {
+            return base.appendingPathComponent(sanitizedCacheKey(for: modelId), isDirectory: true)
         }
-        return HubApi(downloadBase: downloadBase)
+
+        return base
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent(repo.namespace, isDirectory: true)
+            .appendingPathComponent(repo.name, isDirectory: true)
+    }
+
+    private static func makeHubClient(for repoDir: URL) -> HubClient {
+        let cacheRoot = resolveHubCacheRoot(for: repoDir)
+        return HubClient(cache: HubCache(cacheDirectory: cacheRoot))
+    }
+
+    private static func resolveHubCacheRoot(for repoDir: URL) -> URL {
+        let standardizedRepoDir = repoDir.standardizedFileURL
+        let parent = standardizedRepoDir.deletingLastPathComponent()
+        if parent.lastPathComponent != "models" {
+            return parent.appendingPathComponent("hub", isDirectory: true)
+        }
+
+        return parent.deletingLastPathComponent().appendingPathComponent("hub", isDirectory: true)
     }
 }
