@@ -75,6 +75,11 @@ public enum HuggingFaceDownloader {
         additionalFiles: [String] = [],
         progressHandler: ((Double) -> Void)? = nil
     ) async throws {
+        if requiredFilesExist(in: directory, additionalFiles: additionalFiles) {
+            progressHandler?(1.0)
+            return
+        }
+
         var globs: [String] = ["config.json"]
 
         let hasExplicitWeights = additionalFiles.contains { $0.hasSuffix(".safetensors") }
@@ -205,5 +210,34 @@ public enum HuggingFaceDownloader {
         }
 
         return parent.deletingLastPathComponent().appendingPathComponent("hub", isDirectory: true)
+    }
+
+    private static func requiredFilesExist(in directory: URL, additionalFiles: [String]) -> Bool {
+        let fileManager = FileManager.default
+        let configURL = directory.appendingPathComponent("config.json", isDirectory: false)
+        guard fileManager.fileExists(atPath: configURL.path) else {
+            return false
+        }
+
+        if additionalFiles.isEmpty {
+            return weightsExist(in: directory)
+        }
+
+        for file in additionalFiles {
+            guard !containsGlobSyntax(file) else {
+                return false
+            }
+
+            let fileURL = directory.appendingPathComponent(file, isDirectory: false)
+            guard fileManager.fileExists(atPath: fileURL.path) else {
+                return false
+            }
+        }
+
+        return true
+    }
+
+    private static func containsGlobSyntax(_ path: String) -> Bool {
+        path.contains("*") || path.contains("?") || path.contains("[")
     }
 }
